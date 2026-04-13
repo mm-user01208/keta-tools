@@ -188,11 +188,12 @@ function getIssueHistory(issueId) {
 /**
  * Calculate processing times for target tickets.
  *
- * Target: tickets whose status changed to 「手動申請結果待ち」 or 「渡航認証送信完了」
- * on the given day.
+ * Target: tickets whose status changed to 「手動申請結果待ち」 on the given day.
+ * (Any ticket that has ever been set to 手動申請結果待ち, regardless of current status.)
  *
- * Processing time: time between status change TO 「申込決済完了」 and
- * status change FROM 「申込決済完了」 TO 「手動申請結果待ち」.
+ * Processing time (正味作業時間): time between the LAST transition TO 「申込決済完了」
+ * and the transition FROM 「申込決済完了」 TO 「手動申請結果待ち」.
+ * This excludes wait time during intermediate statuses (情報修正, 申請停止中, etc.).
  *
  * @param {Array<Object>} dayChanges - all status changes for the target day
  * @param {Object} staffMap - staff id → name
@@ -200,12 +201,11 @@ function getIssueHistory(issueId) {
  */
 function calculateProcessingTimes(dayChanges, staffMap) {
   // Step 1: Find target tickets — those with a status change to
-  //         手動申請結果待ち or 渡航認証送信完了 on the given day.
-  var TARGET_STATUSES = ['手動申請結果待ち', '渡航認証送信完了'];
+  //         手動申請結果待ち on the given day.
   var targetIssues = {};  // issueId → { staffId, ... }
 
   dayChanges.forEach(function (row) {
-    if (TARGET_STATUSES.indexOf(row.new_value) !== -1) {
+    if (row.new_value === '手動申請結果待ち') {
       var issueId = row.journals.issue_id;
       var staffId = row.journals.staff_id;
       if (!targetIssues[issueId]) {
@@ -238,24 +238,58 @@ function calculateProcessingTimes(dayChanges, staffMap) {
       return new Date(a.journals.created_at) - new Date(b.journals.created_at);
     });
 
-    // Find the transition TO 申込決済完了 (new_value = '申込決済完了')
-    var paymentEntry = null;
-    // Find the transition FROM 申込決済完了 (old_value = '申込決済完了')
-    var applicationEntry = null;
+    // Find the transition FROM 申込決済完了 TO 手動申請結果待ち
+    // and the LAST transition TO 申込決済完了 that occurred before it.
+    // This handles cases where intermediate statuses (情報修正, 申請停止中)
+    // occur between the first 申込決済完了 and 手動申請結果待ち.
+    var paymentEntry = null;      // last transition TO 申込決済完了 before application
+    var applicationEntry = null;  // transition FROM 申込決済完了 TO 手動申請結果待ち
     var isAnomaly = false;
+    var hadIntermediateStatus = false;
 
+    // First pass: find the transition TO 手動申請結果待ち from 申込決済完了
     for (var i = 0; i < history.length; i++) {
       var h = history[i];
-      if (h.new_value === '申込決済完了') {
-        paymentEntry = h;
-      }
-      if (h.old_value === '申込決済完了') {
+      if (h.old_value === '申込決済完了' && h.new_value === '手動申請結果待ち') {
         applicationEntry = h;
-        // Check if anomaly: the next status after 申込決済完了 should be 手動申請結果待ち
-        if (h.new_value !== '手動申請結果待ち') {
-          isAnomaly = true;
+        break;
+      }
+    }
+
+    if (applicationEntry) {
+      // Find the LAST transition TO 申込決済完了 that occurred before the application entry
+      var appTime = new Date(applicationEntry.journals.created_at).getTime();
+      for (var i = 0; i < history.length; i++) {
+        var h = history[i];
+        if (h.new_value === '申込決済完了' && new Date(h.journals.created_at).getTime() < appTime) {
+          paymentEntry = h;  // keep updating — we want the LAST one before application
         }
-        break;  // Take the first transition FROM 申込決済完了
+      }
+
+      // Check if there were intermediate statuses between first 申込決済完了 and 手動申請結果待ち
+      var firstPayment = null;
+      for (var i = 0; i < history.length; i++) {
+        if (history[i].new_value === '申込決済完了') {
+          firstPayment = history[i];
+          break;
+        }
+      }
+      if (firstPayment && paymentEntry && firstPayment.journal_id !== paymentEntry.journal_id) {
+        hadIntermediateStatus = true;
+      }
+    } else {
+      // No direct 申込決済完了 → 手動申請結果待ち found
+      // Check if there's any transition FROM 申込決済完了 (anomaly)
+      for (var i = 0; i < history.length; i++) {
+        var h = history[i];
+        if (h.new_value === '申込決済完了') {
+          paymentEntry = h;
+        }
+        if (h.old_value === '申込決済完了' && h.new_value !== '手動申請結果待ち') {
+          isAnomaly = true;
+          applicationEntry = h;
+          break;
+        }
       }
     }
 
@@ -267,6 +301,7 @@ function calculateProcessingTimes(dayChanges, staffMap) {
       applicationTime: null,
       processingMinutes: null,
       isAnomaly: isAnomaly,
+      hadIntermediateStatus: hadIntermediateStatus,
       hasWarning: false,
       warningReasons: []
     };
@@ -457,7 +492,7 @@ function writeToSpreadsheet(dateStr, aggregated, details) {
     detailSheet = ss.insertSheet('詳細');
     detailSheet.appendRow([
       '日付', 'チケットID', '担当者', '決済時刻/JST', '申請時刻/JST',
-      '処理時間/分', '異例', '警告', '警告理由'
+      '処理時間/分', '中断あり', '異例', '警告', '警告理由'
     ]);
     Logger.log('Created sheet: 詳細');
   }
@@ -473,6 +508,7 @@ function writeToSpreadsheet(dateStr, aggregated, details) {
       paymentJST,
       applicationJST,
       t.processingMinutes !== null ? t.processingMinutes : '',
+      t.hadIntermediateStatus ? '○' : '',
       t.isAnomaly ? '○' : '',
       t.hasWarning ? '○' : '',
       t.warningReasons.join(', ')
