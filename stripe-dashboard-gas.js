@@ -25,20 +25,21 @@ var CONFIG = {
 };
 
 // ---------------------------------------------------------------------------
-// Supabase RPC helper
+// Supabase query helper (views)
 // ---------------------------------------------------------------------------
 
-function callRpc(functionName) {
-  var url = CONFIG.SUPABASE_URL + '/rest/v1/rpc/' + functionName;
+function queryView(viewName, queryParams) {
+  var url = CONFIG.SUPABASE_URL + '/rest/v1/' + viewName;
+  if (queryParams) {
+    url += '?' + queryParams;
+  }
   var options = {
-    method: 'post',
+    method: 'get',
     headers: {
       'apikey': CONFIG.SUPABASE_API_KEY,
       'Authorization': 'Bearer ' + CONFIG.SUPABASE_API_KEY,
-      'Content-Type': 'application/json',
       'Accept': 'application/json'
     },
-    payload: '{}',
     muteHttpExceptions: true
   };
 
@@ -46,8 +47,8 @@ function callRpc(functionName) {
   var code = response.getResponseCode();
 
   if (code < 200 || code >= 300) {
-    Logger.log('RPC error (' + code + '): ' + response.getContentText());
-    throw new Error('Supabase RPC ' + functionName + ' failed: ' + code);
+    Logger.log('Query error (' + code + '): ' + response.getContentText());
+    throw new Error('Supabase query ' + viewName + ' failed: ' + code);
   }
 
   return JSON.parse(response.getContentText());
@@ -138,7 +139,7 @@ function updateDashboard() {
 
   // --- 日次サマリー ---
   Logger.log('Fetching daily summary...');
-  var dailySummary = callRpc('get_stripe_daily_summary');
+  var dailySummary = queryView('stripe_daily_summary', 'order=report_date.desc');
 
   var summarySheet = getOrCreateSheet(ss, 'Stripe日次サマリー');
   var summaryHeaders = [
@@ -163,7 +164,7 @@ function updateDashboard() {
 
   // --- 全チケット ---
   Logger.log('Fetching all transactions...');
-  var allTx = callRpc('get_stripe_dashboard');
+  var allTx = queryView('stripe_dashboard', 'order=stripe_created_at.desc');
 
   var allSheet = getOrCreateSheet(ss, 'Stripe全チケット');
   var allHeaders = [
