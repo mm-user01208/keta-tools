@@ -18,8 +18,8 @@
 // ---------------------------------------------------------------------------
 
 var CONFIG = {
-  SUPABASE_URL: 'https://bmuvklukfntqmopblhox.supabase.co',
-  SUPABASE_API_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJtdXZrbHVrZm50cW1vcGJsaG94Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMzI4NTgyNCwiZXhwIjoyMDQ4ODYxODI0fQ.5ZRquHJnInh58sLHABGIAgRR87MJRyoc6t16jv7H0Q8',
+  SUPABASE_URL: 'https://ujcunufwdfqyletpbztk.supabase.co',
+  SUPABASE_API_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqY3VudWZ3ZGZxeWxldHBienRrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTcwMjI3ODMxNSwiZXhwIjoyMDE3ODU0MzE1fQ.rWgJYM2Tz5mOdg7cxnN-JtPJj7oFTo7SnD177O1nKgU',
   SPREADSHEET_ID: '1-r7UdFKOLJ_2BZ3WVRYkzOuIj52nlTLF5cIqyejBqZM',
   JST_OFFSET_MS: 9 * 60 * 60 * 1000
 };
