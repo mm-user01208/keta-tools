@@ -460,15 +460,17 @@ function aggregateByStaff(ticketResults) {
  * @param {Array<Object>} aggregated - per-staff summaries from aggregateByStaff
  * @param {Array<Object>} details - per-ticket results from calculateProcessingTimes
  */
-function writeToSpreadsheet(dateStr, aggregated, details) {
+function writeToSpreadsheet(dateStr, aggregated, details, monthSuffix) {
   var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  var dailySheetName = monthSuffix ? '日報_' + monthSuffix : '日報';
+  var detailSheetName = monthSuffix ? '詳細_' + monthSuffix : '詳細';
 
   // --- Sheet 1: 日報 ---
-  var dailySheet = ss.getSheetByName('日報');
+  var dailySheet = ss.getSheetByName(dailySheetName);
   if (!dailySheet) {
-    dailySheet = ss.insertSheet('日報');
+    dailySheet = ss.insertSheet(dailySheetName);
     dailySheet.appendRow(['日付', '担当者', '件数', '最速/分', '最遅/分', '平均/分', '異例', '警告']);
-    Logger.log('Created sheet: 日報');
+    Logger.log('Created sheet: ' + dailySheetName);
   }
 
   aggregated.forEach(function (row) {
@@ -487,9 +489,9 @@ function writeToSpreadsheet(dateStr, aggregated, details) {
   Logger.log('Wrote ' + aggregated.length + ' rows to 日報');
 
   // --- Sheet 2: 詳細 ---
-  var detailSheet = ss.getSheetByName('詳細');
+  var detailSheet = ss.getSheetByName(detailSheetName);
   if (!detailSheet) {
-    detailSheet = ss.insertSheet('詳細');
+    detailSheet = ss.insertSheet(detailSheetName);
     detailSheet.appendRow([
       '日付', 'チケットID', '担当者', '決済時刻/JST', '申請時刻/JST',
       '処理時間/分', '中断あり', '異例', '警告', '警告理由'
@@ -547,8 +549,9 @@ function runManualReport(dateStr) {
 /**
  * Internal: run the full pipeline for a given JST date.
  * @param {string} dateStr
+ * @param {string} [monthSuffix] - optional suffix for sheet names (e.g. '2026-03')
  */
-function _processDate(dateStr) {
+function _processDate(dateStr, monthSuffix) {
   try {
     // 1. Load staff mapping
     var staffMap = getStaffMap();
@@ -573,7 +576,7 @@ function _processDate(dateStr) {
     var aggregated = aggregateByStaff(ticketResults);
 
     // 5. Write to spreadsheet
-    writeToSpreadsheet(dateStr, aggregated, ticketResults);
+    writeToSpreadsheet(dateStr, aggregated, ticketResults, monthSuffix);
 
     Logger.log('=== Report complete for ' + dateStr + ' ===');
   } catch (e) {
@@ -581,4 +584,34 @@ function _processDate(dateStr) {
     Logger.log('Stack: ' + e.stack);
     throw e;
   }
+}
+
+/**
+ * Run report for an entire month. Creates month-specific tabs.
+ * @param {string} yearMonth - format 'yyyy-MM' (e.g. '2026-03')
+ */
+function runMonthlyReport(yearMonth) {
+  if (!yearMonth || !/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error('Invalid format. Use yyyy-MM (e.g. "2026-03")');
+  }
+  Logger.log('=== Monthly Report for ' + yearMonth + ' ===');
+
+  var year = parseInt(yearMonth.split('-')[0], 10);
+  var month = parseInt(yearMonth.split('-')[1], 10);
+  var daysInMonth = new Date(year, month, 0).getDate();
+
+  var staffMap = getStaffMap(); // cache once
+
+  for (var day = 1; day <= daysInMonth; day++) {
+    var dd = day < 10 ? '0' + day : '' + day;
+    var dateStr = yearMonth + '-' + dd;
+    Logger.log('Processing ' + dateStr + ' (' + day + '/' + daysInMonth + ')');
+    try {
+      _processDate(dateStr, yearMonth);
+    } catch (e) {
+      Logger.log('Error on ' + dateStr + ': ' + e.message);
+    }
+  }
+
+  Logger.log('=== Monthly Report complete for ' + yearMonth + ' ===');
 }
