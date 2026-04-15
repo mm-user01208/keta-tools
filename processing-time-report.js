@@ -615,3 +615,29 @@ function runMonthlyReport(yearMonth) {
 
   Logger.log('=== Monthly Report complete for ' + yearMonth + ' ===');
 }
+
+/**
+ * Run report for a date range within a month. Used to avoid GAS 6-min timeout.
+ * @param {string} yearMonth - format 'yyyy-MM' (e.g. '2026-03')
+ * @param {number} startDay - start day (inclusive)
+ * @param {number} endDay - end day (inclusive)
+ */
+function runMonthlyReport_range(yearMonth, startDay, endDay) {
+  var year = parseInt(yearMonth.split('-')[0], 10);
+  var month = parseInt(yearMonth.split('-')[1], 10);
+  var daysInMonth = new Date(year, month, 0).getDate();
+  if (endDay > daysInMonth) endDay = daysInMonth;
+  Logger.log('=== Range Report for ' + yearMonth + ' day ' + startDay + '-' + endDay + ' ===');
+  for (var day = startDay; day <= endDay; day++) {
+    var dd = day < 10 ? '0' + day : '' + day;
+    var dateStr = yearMonth + '-' + dd;
+    Logger.log('Processing ' + dateStr);
+    try { _processDate(dateStr, yearMonth); }
+    catch (e) { Logger.log('Error on ' + dateStr + ': ' + e.message); }
+  }
+  Logger.log('=== Range Report complete ===');
+}
+
+// --- Helper functions for manual execution ---
+function run3月前半() { runMonthlyReport_range('2026-03', 1, 16); }
+function run3月後半() { runMonthlyReport_range('2026-03', 17, 31); }
