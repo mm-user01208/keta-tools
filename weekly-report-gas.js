@@ -183,11 +183,12 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
   var processingTimeData = _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC, staffMap, excludedIssueIds);
 
   // ---- Write Table 1: Cancel Rate ----
-  var nextRow = _writeCancelRateTable(sheet, cancelData, cfg.color, mondayJST);
+  var svcName = cfg.sheetName;
+  var nextRow = _writeCancelRateTable(sheet, cancelData, cfg.color, mondayJST, svcName);
 
   // ---- Write Table 2: Staff Processing Time ----
   nextRow += 2; // gap
-  _writeProcessingTimeTable(sheet, processingTimeData, cfg.color, mondayJST, nextRow);
+  _writeProcessingTimeTable(sheet, processingTimeData, cfg.color, mondayJST, nextRow, svcName);
 
   // Auto-resize columns
   var lastCol = sheet.getLastColumn();
@@ -415,8 +416,18 @@ function _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC
 // Write Cancel Rate Table
 // ============================================================
 
-function _writeCancelRateTable(sheet, data, serviceColor, mondayJST) {
+function _writeCancelRateTable(sheet, data, serviceColor, mondayJST, serviceName) {
   var startRow = 1;
+
+  // Title row
+  var endDateJST = new Date(mondayJST.getTime() + 6 * 24 * 60 * 60 * 1000);
+  var titleStartMM = ('0' + (mondayJST.getUTCMonth() + 1)).slice(-2);
+  var titleStartDD = ('0' + mondayJST.getUTCDate()).slice(-2);
+  var titleEndMM = ('0' + (endDateJST.getUTCMonth() + 1)).slice(-2);
+  var titleEndDD = ('0' + endDateJST.getUTCDate()).slice(-2);
+  var title = serviceName + ' キャンセル率（' + titleStartMM + '/' + titleStartDD + '〜' + titleEndMM + '/' + titleEndDD + '）';
+  sheet.getRange(startRow, 1).setValue(title).setFontWeight('bold').setFontColor(serviceColor);
+  startRow++;
 
   // Generate date strings for header
   var dateHeaders = [];
@@ -504,7 +515,12 @@ function _writeCancelRateTable(sheet, data, serviceColor, mondayJST) {
 // Write Processing Time Table
 // ============================================================
 
-function _writeProcessingTimeTable(sheet, processingData, serviceColor, mondayJST, startRow) {
+function _writeProcessingTimeTable(sheet, processingData, serviceColor, mondayJST, startRow, serviceName) {
+  // Title row
+  sheet.getRange(startRow, 1).setValue(serviceName + ' スタッフ別処理時間（就業時間内）')
+    .setFontWeight('bold').setFontColor(serviceColor);
+  startRow++;
+
   // Header
   var headers = ['担当者', '日付', '件数', '5分以内', '5分以内率', '5〜10分', '5〜10分率',
                  '11〜30分', '11〜30分率', '30分〜', '30分〜率'];
