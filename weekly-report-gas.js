@@ -139,9 +139,9 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
   });
 
   // ---- Classify events ----
-  var payments = []; // {dt_jst, staff, issue_id, journal entries...}
-  var refunds = [];
-  var processings = []; // for processing time calc
+  var payments = [];
+  var processings = [];
+  var refundIssueIds = {}; // issue_id -> true (from week's journals)
 
   for (var i = 0; i < journals.length; i++) {
     var j = journals[i];
@@ -158,12 +158,7 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
       });
     }
     if (j.new_value === '返金依頼-手数料のみ') {
-      refunds.push({
-        dt_jst: dtJST,
-        staff: staffName,
-        issue_id: j.issue_id,
-        hour: dtJST.getUTCHours()
-      });
+      refundIssueIds[j.issue_id] = true;
     }
     if (j.old_value === '申込決済完了' && j.new_value === '手動申請結果待ち') {
       processings.push({
@@ -175,12 +170,44 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
     }
   }
 
+  // Also check full history for refund status of payment tickets
+  // (refund might have happened outside the week)
+  var paymentIssueIds = [];
+  for (var i = 0; i < payments.length; i++) {
+    if (paymentIssueIds.indexOf(payments[i].issue_id) === -1 && !refundIssueIds[payments[i].issue_id]) {
+      paymentIssueIds.push(payments[i].issue_id);
+    }
+  }
+  if (paymentIssueIds.length > 0) {
+    var batchSize = 50;
+    for (var b = 0; b < paymentIssueIds.length; b += batchSize) {
+      var batch = paymentIssueIds.slice(b, b + batchSize);
+      var idsParam = '(' + batch.join(',') + ')';
+      var path = 'journal_details?select=journal_id,new_value,journals!inner(issue_id)'
+        + '&field_name=eq.status_code'
+        + '&new_value=eq.%E8%BF%94%E9%87%91%E4%BE%9D%E9%A0%BC-%E6%89%8B%E6%95%B0%E6%96%99%E3%81%AE%E3%81%BF'
+        + '&journals.issue_id=in.' + idsParam;
+      var rows = _supabaseGet(baseUrl, apiKey, path);
+      for (var ri = 0; ri < rows.length; ri++) {
+        refundIssueIds[rows[ri].journals.issue_id] = true;
+      }
+    }
+  }
+
+  // Build refunds list from payments that have refund flag
+  var refunds = [];
+  for (var i = 0; i < payments.length; i++) {
+    if (refundIssueIds[payments[i].issue_id]) {
+      refunds.push(payments[i]);
+    }
+  }
+
   // ---- Build per-day data for cancel rate table ----
   var cancelData = _buildCancelData(payments, refunds, mondayJST);
 
   // ---- Build processing time data ----
   // Need to find pairs: last 申込決済完了 -> 手動申請結果待ち for each issue
-  var processingTimeData = _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC, staffMap, excludedIssueIds);
+  var processingTimeData = _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC, staffMap, excludedIssueIds, journals);
 
   // ---- Write Table 1: Cancel Rate ----
   var svcName = cfg.sheetName;
@@ -340,31 +367,41 @@ function _dayIndex(dtJST, mondayJST) {
 // Processing time data
 // ============================================================
 
-function _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC, staffMap, excludedIssueIds) {
-  // For each processing event (申込決済完了 -> 手動申請結果待ち), we need the payment time.
-  // Collect unique issue_ids from processings
+function _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC, staffMap, excludedIssueIds, allJournals) {
+  // Use allJournals (already fetched) to find payment times — no extra API calls needed.
+  // Build map: issue_id -> list of 申込決済完了 datetimes (UTC)
+  var paymentMap = {}; // issue_id -> [{dt_utc}]
+  for (var i = 0; i < allJournals.length; i++) {
+    var j = allJournals[i];
+    if (j.new_value === '申込決済完了') {
+      if (!paymentMap[j.issue_id]) paymentMap[j.issue_id] = [];
+      paymentMap[j.issue_id].push({
+        dt_utc: new Date(j.created_at)
+      });
+    }
+  }
+
+  // Also fetch payment events outside the week range for issues that had processing this week
+  // (payment might have happened before the week started)
   var issueIds = [];
   for (var i = 0; i < processings.length; i++) {
-    if (issueIds.indexOf(processings[i].issue_id) === -1) {
+    if (issueIds.indexOf(processings[i].issue_id) === -1 && !paymentMap[processings[i].issue_id]) {
       issueIds.push(processings[i].issue_id);
     }
   }
 
-  // Fetch all 申込決済完了 events for these issues to find the last payment datetime
-  var paymentMap = {}; // issue_id -> [{dt_utc}]
   if (issueIds.length > 0) {
-    // Fetch in batches to avoid URL length limits
     var batchSize = 50;
     for (var b = 0; b < issueIds.length; b += batchSize) {
       var batch = issueIds.slice(b, b + batchSize);
       var idsParam = '(' + batch.join(',') + ')';
       var path = 'journal_details?select=id,old_value,new_value,journal_id,journals!inner(id,created_at,issue_id,staff_id)'
         + '&field_name=eq.status_code'
-        + '&new_value=eq.申込決済完了'
+        + '&new_value=eq.%E7%94%B3%E8%BE%BC%E6%B1%BA%E6%B8%88%E5%AE%8C%E4%BA%86'
         + '&journals.issue_id=in.' + idsParam;
       var rows = _supabaseGet(baseUrl, apiKey, path);
-      for (var i = 0; i < rows.length; i++) {
-        var r = rows[i];
+      for (var ri = 0; ri < rows.length; ri++) {
+        var r = rows[ri];
         var issId = r.journals.issue_id;
         if (!paymentMap[issId]) paymentMap[issId] = [];
         paymentMap[issId].push({
@@ -374,15 +411,14 @@ function _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC
     }
   }
 
-  // For each processing event, find the last 申込決済完了 before it, compute time diff
-  var results = []; // {staff, dt_jst, minutes, issue_id}
+  // For each processing event, find the last 申込決済完了 before it
+  var results = [];
 
   for (var i = 0; i < processings.length; i++) {
     var proc = processings[i];
-    var procDtUTC = new Date(proc.dt_jst.getTime() - 9 * 60 * 60 * 1000); // back to UTC
+    var procDtUTC = new Date(proc.dt_jst.getTime() - 9 * 60 * 60 * 1000);
     var payEvents = paymentMap[proc.issue_id] || [];
 
-    // Find the last payment event before (or at) this processing event
     var lastPayDt = null;
     for (var p = 0; p < payEvents.length; p++) {
       var pdt = payEvents[p].dt_utc;
@@ -396,14 +432,13 @@ function _buildProcessingTimeData(baseUrl, apiKey, processings, startUTC, endUTC
     if (!lastPayDt) continue;
 
     var payDtJST = new Date(lastPayDt.getTime() + 9 * 60 * 60 * 1000);
-    // Only include if payment was during working hours (hour >= 9)
     if (payDtJST.getUTCHours() < 9) continue;
 
     var minutes = (procDtUTC.getTime() - lastPayDt.getTime()) / (60 * 1000);
 
     results.push({
       staff: proc.staff,
-      dt_jst: proc.dt_jst,
+      dt_jst: payDtJST,
       minutes: minutes,
       issue_id: proc.issue_id
     });
