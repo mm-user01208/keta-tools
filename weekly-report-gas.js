@@ -142,6 +142,7 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
   var payments = [];
   var processings = [];
   var refundIssueIds = {}; // issue_id -> true (from week's journals)
+  var paymentSeenIssues = {}; // dedupe: only count first 申込決済完了 per issue
 
   for (var i = 0; i < journals.length; i++) {
     var j = journals[i];
@@ -150,12 +151,15 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
     var staffName = _resolveStaffName(j.staff_id, staffMap);
 
     if (j.old_value === '申込完了' && j.new_value === '申込決済完了') {
-      payments.push({
-        dt_jst: dtJST,
-        staff: staffName,
-        issue_id: j.issue_id,
-        hour: dtJST.getUTCHours()
-      });
+      if (!paymentSeenIssues[j.issue_id]) {
+        payments.push({
+          dt_jst: dtJST,
+          staff: staffName,
+          issue_id: j.issue_id,
+          hour: dtJST.getUTCHours()
+        });
+        paymentSeenIssues[j.issue_id] = true;
+      }
     }
     if (j.new_value === '返金依頼-手数料のみ') {
       refundIssueIds[j.issue_id] = true;
@@ -194,11 +198,13 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
     }
   }
 
-  // Build refunds list from payments that have refund flag
+  // Build refunds list from payments that have refund flag (dedupe by issue_id)
   var refunds = [];
+  var refundedIssuesSeen = {};
   for (var i = 0; i < payments.length; i++) {
-    if (refundIssueIds[payments[i].issue_id]) {
+    if (refundIssueIds[payments[i].issue_id] && !refundedIssuesSeen[payments[i].issue_id]) {
       refunds.push(payments[i]);
+      refundedIssuesSeen[payments[i].issue_id] = true;
     }
   }
 
@@ -231,7 +237,9 @@ function _processService(ss, cfg, baseUrl, apiKey, startUTC, endUTC, mondayJST) 
 // ============================================================
 
 function _supabaseGet(baseUrl, apiKey, path) {
-  var url = baseUrl + '/rest/v1/' + path;
+  // Remove trailing slash from baseUrl if present
+  var cleanUrl = baseUrl.replace(/\/+$/, '');
+  var url = cleanUrl + '/rest/v1/' + path;
   var separator = url.indexOf('?') === -1 ? '?' : '&';
   // Pagination
   var allRows = [];
